@@ -36,7 +36,14 @@ lazy val commonSettings = Seq(
     "-feature",
     "-language:existentials",
     "-language:dynamics,higherKinds"
-  ),
+  ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
+    case Some((3, _)) => Seq("-language:Scala2,implicitConversions")
+    case _ => Seq("-target:jvm-1.8")
+  }),
+  Compile / unmanagedSourceDirectories += (CrossVersion.partialVersion(scalaVersion.value) match {
+    case Some((3, _)) => baseDirectory.value / "../src/main/scala-3"
+    case _ => baseDirectory.value / "../src/main/scala-2"
+  }),
   publishTo := sonatypePublishToBundle.value,
   releaseEarlyWith := SonatypePublisher
 )
@@ -87,7 +94,8 @@ lazy val dijon = crossProject(JVMPlatform, JSPlatform)
   .settings(
     scalaVersion := "2.13.5", // Update .github/workflows/ci.yml when changing this
     libraryDependencies ++= Seq(
-      "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % "2.8.1",
+      ("com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-core" % "2.8.1")
+        .cross(CrossVersion.for3Use2_13),
       "org.scala-lang.modules" %%% "scala-collection-compat" % "2.4.4",
       "org.scalatest" %%% "scalatest" % "3.2.8" % Test
     )
@@ -96,14 +104,16 @@ lazy val dijon = crossProject(JVMPlatform, JSPlatform)
     crossScalaVersions := Seq(
       "2.11.12",
       "2.12.13",
-      "2.13.5"
+      "2.13.5",
+      "3.0.0-RC3"
     ) // Update .github/workflows/ci.yml when changing this
   )
   .jsSettings(
     crossScalaVersions := Seq(
       "2.11.12",
       "2.12.13",
-      "2.13.5"
+      "2.13.5",
+      "3.0.0-RC3"
     ), // Update .github/workflows/ci.yml when changing this
     scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)
       .withESFeatures(_.withUseECMAScript2015(false))),

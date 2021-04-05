@@ -2,38 +2,40 @@ package object dijon {
   import java.nio.charset.StandardCharsets._
   import java.util
 
-  import UnionType.{∅, ∨}
   import com.github.plokhotnyuk.jsoniter_scala.core._
 
-  import scala.jdk.CollectionConverters._
   import scala.collection.mutable
+  import scala.jdk.javaapi.CollectionConverters
   import scala.util.Try
 
-  type JsonTypes = ∅ ∨ String ∨ Int ∨ Double ∨ Boolean ∨ JsonArray ∨ JsonObject ∨ None.type
-  type JsonType[A] = JsonTypes#Member[A]
-  type SomeJson = Json[A] forSome { type A }
+  type JsonPrimitive = String | Int | Double | Boolean | None.type
+  type Rec[JA[_], JO[_], A] = A match {
+    case JsonPrimitive => JsonPrimitive | JA[Rec[JA, JO, JsonPrimitive]] | JO[Rec[JA, JO, JsonPrimitive]]
+    case _ => A | JA[Rec[JA, JO, A]] | JO[Rec[JA, JO, A]]
+  }
+  type SomeJson = Rec[[A] =>> mutable.Buffer[A], [A] =>> mutable.Map[String, A], JsonPrimitive]
   type JsonObject = mutable.Map[String, SomeJson]
   type JsonArray = mutable.Buffer[SomeJson]
 
-  def `[]` : SomeJson = new mutable.ArrayBuffer[SomeJson](initArrayCapacity)
+  def `[]`: SomeJson = new mutable.ArrayBuffer[SomeJson](initArrayCapacity)
 
-  def `{}` : SomeJson = new util.LinkedHashMap[String, SomeJson](initMapCapacity).asScala
+  def `{}`: SomeJson = CollectionConverters.asScala(new util.LinkedHashMap[String, SomeJson](initMapCapacity))
 
   def obj(values: (String, SomeJson)*): SomeJson = {
     val len = values.length
-    var i = 0
     val map = new util.LinkedHashMap[String, SomeJson](len)
+    var i = 0
     while (i < len) {
       val kv = values(i)
       map.put(kv._1, kv._2)
       i += 1
     }
-    map.asScala
+    CollectionConverters.asScala(map)
   }
 
   def arr(values: SomeJson*): SomeJson = mutable.ArrayBuffer[SomeJson](values: _*)
 
-  implicit class Json[A: JsonType](val underlying: A) extends Dynamic {
+  implicit class Json(val underlying: SomeJson) extends Dynamic {
     def selectDynamic(key: String): SomeJson = apply(key)
 
     def updateDynamic(key: String)(value: SomeJson): Unit = update(key, value)
@@ -74,13 +76,13 @@ package object dijon {
     def ++(that: SomeJson): SomeJson = (this.underlying, that.underlying) match {
       case (a: JsonObject, b: JsonObject) =>
         val res = new util.LinkedHashMap[String, SomeJson](a.size + b.size)
-        a.foreach { case (k, v) =>
-          res.put(k, if (b.contains(k)) v ++ b(k) else v.deepCopy)
+        a.foreach { case (k, v: SomeJson) =>
+          res.put(k, if (b.contains(k)) Json(v) ++ b(k) else Json(v).deepCopy)
         }
-        b.foreach { case (k, v) =>
-          if (!res.containsKey(k)) res.put(k, v.deepCopy)
+        b.foreach { case (k, v: SomeJson) =>
+          if (!res.containsKey(k)) res.put(k, Json(v).deepCopy)
         }
-        res.asScala
+        CollectionConverters.asScala(res)
       case _ => that.deepCopy
     }
 
@@ -131,16 +133,14 @@ package object dijon {
       case arr: JsonArray =>
         arr.foldLeft(new mutable.ArrayBuffer[SomeJson](arr.length))((res, x) => res += x.deepCopy)
       case obj: JsonObject =>
-        obj
-          .foldLeft(new util.LinkedHashMap[String, SomeJson](obj.size)) { (res, kv) =>
-            res.put(kv._1, kv._2.deepCopy)
-            res
-          }
-          .asScala
-      case _ => this
+        CollectionConverters.asScala(obj.foldLeft(new util.LinkedHashMap[String, SomeJson](obj.size)) { (res, kv) =>
+          res.put(kv._1, kv._2.deepCopy)
+          res
+        })
+      case x => x
     }
 
-    override def toString: String = compact(this)
+    override def toString: String = compact(underlying)
 
     override def equals(obj: Any): Boolean = underlying == (obj match {
       case that: SomeJson => that.underlying
@@ -190,20 +190,26 @@ package object dijon {
         if (!in.isNextToken(']')) {
           in.rollbackToken()
           val dp = depth - 1
-          do arr += decode(in, dp) while (in.isNextToken(','))
+          while ({
+            arr += decode(in, dp)
+            in.isNextToken(',')
+          }) ()
           if (!in.isCurrentToken(']')) in.arrayEndOrCommaError()
         }
-        arr
+        (arr: SomeJson)
       } else if (b == '{') {
         if (depth <= 0) in.decodeError("depth limit exceeded")
         val obj = new util.LinkedHashMap[String, SomeJson](initMapCapacity)
         if (!in.isNextToken('}')) {
           in.rollbackToken()
           val dp = depth - 1
-          do obj.put(in.readKeyAsString(), decode(in, dp)) while (in.isNextToken(','))
+          while ({
+            obj.put(in.readKeyAsString(), decode(in, dp))
+            in.isNextToken(',')
+          }) ()
           if (!in.isCurrentToken('}')) in.objectEndOrCommaError()
         }
-        obj.asScala
+        CollectionConverters.asScala(obj)
       } else in.decodeError("expected JSON value")
     }
 
@@ -230,7 +236,7 @@ package object dijon {
         val dp = depth - 1
         val it = obj.iterator
         while (it.hasNext) {
-          val (k, v) = it.next()
+          val (k, v: SomeJson) = it.next()
           out.writeKey(k)
           encode(v, out, dp)
         }
