@@ -2,6 +2,7 @@ package dijon
 
 import com.github.plokhotnyuk.jsoniter_scala.core.{JsonReaderException, JsonWriterException}
 
+import scala.language.dynamics
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
